@@ -1,0 +1,185 @@
+---
+title: "Untitled"
+author: "Paulo Pereira da Silva"
+date: "21 de Abril de 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+## Project Assignment
+In the first stage, I download several packages that are going to be useful in this assignment.
+
+```{r, include=FALSE}
+library(tidyverse)
+library(caret)
+library(lubridate)
+library(pgmm)
+library(rpart)
+library(gbm)
+library(forecast)
+```
+
+Afterwards, the two files are imported to the R environment.
+
+```{r, include=FALSE}
+# training <- read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+# testing <- read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+pml_training <- read_csv("C:/Users/pmps/Downloads/pml-training.csv")
+pml_testing <- read_csv("C:/Users/pmps/Downloads/pml-testing.csv")
+```
+
+Next, I take a quick look at the pml_training dataframe. To do so, I use skim function from the skimr package. A result that stands out is that several variables contain a huge proportion of missing values. For these variables, less than 3% of the sample is available, so that I exclude them from the analysis. I also exclude the first five variables of the dataset, since they represent id variables. Meanwhile, I also analyze correlations, near-zero variance variables and linear combinations. As these steps are alowed with preprossessing inside the caret::train function, I do not report them here.
+
+
+```{r}
+skimr::skim(pml_training)
+skimr::skim(pml_training)$n_missing %>% table()
+
+pml_training0 <- pml_training %>% 
+  select_if(function(x) sum(is.na(x))==0) %>% 
+  select(-(1:5))
+
+
+# nzv <- nearZeroVar(pml_training0, saveMetrics= TRUE)
+# pml_training0 <- pml_training0[,-nzv$nzv]
+
+
+# highlyCorDescr <- findCorrelation(pml_training0 %>% select_if(is.numeric) %>%  cor(), cutoff = .75)
+# highlyCorDescr <- colnames(pml_training0 %>% select_if(is.numeric))[highlyCorDescr]
+
+# LinearCombos <- findLinearCombos(pml_training0 %>% select_if(is.numeric))
+
+
+
+```
+
+The next step is to create training and testing sets. The createDataPartition function from the caret package is used to accomplish that. I considered 75%-25% partition.
+
+
+```{r}
+inTrain<-createDataPartition(y = pml_training0$classe, p = 0.75, list = FALSE)
+training <- pml_training0[inTrain,]
+testing <- pml_training0[-inTrain,]
+```
+
+Now, I move on to the estimation of the random forest model using method "rf". I use cross-validation, five folds. Variables are scaled, but in reality there was no need for that. Accuracy is about 99.84%.
+
+```{r}
+
+
+set.seed(10005)
+
+
+
+pre_process <- preProcess(training, method = c("center", "scale", "nzv", "corr", "zv"))
+# controlRF <- trainControl(method="repeatedcv", repeats = 5, number=5, verboseIter=FALSE)
+controlRF <- trainControl(method="cv", number=5, verboseIter=FALSE)
+
+model_rf <- train(classe ~ ., data=training, method="rf", preProcess=c("center", "scale", "nzv", "corr", "zv"),
+                          trControl=controlRF)
+model_rf$finalModel
+
+predict_rf <- predict(model_rf, testing)
+confusionMatrix(factor(testing$classe, levels=c("A", "B", "C", "D", "E")), factor(predict_rf, levels=c("A", "B", "C", "D", "E")))
+
+
+
+```
+
+
+Next, I predict a glm with regularization (i.e., using grid to find the best lambda and alpha).
+
+
+```{r}
+
+set.seed(10005)
+
+pre_process <- preProcess(training, method = c("center", "scale", "nzv", "corr", "zv"))
+# controlRF <- trainControl(method="repeatedcv", repeats = 5, number=5, verboseIter=FALSE)
+controlglm <- trainControl(method="cv", number=5, verboseIter=FALSE, 
+                           classProbs = TRUE)
+
+
+myGrid <- expand.grid(alpha = seq(0.0001, 1, length = 20), lambda = seq(0.0001, 1, length = 20))                    
+
+model_glm <- train(classe ~ ., data=training, method = "glmnet", preProcess=c("center", "scale", "nzv", "corr", "zv"),
+                   trControl=controlglm, tuneGrid = myGrid)
+
+# model_glm$finalModel
+
+predict_glm <- predict(model_glm, testing)
+confusionMatrix(factor(testing$classe, levels=c("A", "B", "C", "D", "E")), factor(predict_glm, levels=c("A", "B", "C", "D", "E")))
+
+
+
+
+```
+
+
+Here, I use GBM, another machine learning algo.
+
+```{r}
+
+set.seed(10005)
+
+pre_process <- preProcess(training, method = c("center", "scale", "nzv", "corr", "zv"))
+# controlRF <- trainControl(method="repeatedcv", repeats = 5, number=5, verboseIter=FALSE)
+controlgbm <- trainControl(method="cv", number=5, verboseIter=FALSE)
+
+
+                    
+
+model_gbm <- train(classe ~ ., data=training, method = "gbm", preProcess=c("center", "scale", "nzv", "corr", "zv"),
+                   trControl=controlglm)
+
+model_gbm$finalModel
+
+predict_gbm <- predict(model_gbm, testing)
+confusionMatrix(factor(testing$classe, levels=c("A", "B", "C", "D", "E")), factor(predict_gbm, levels=c("A", "B", "C", "D", "E")))
+
+
+
+
+```
+
+
+
+Finally, I use decision trees.
+
+```{r}
+
+set.seed(10005)
+
+pre_process <- preProcess(training, method = c("center", "scale", "nzv", "corr", "zv"))
+# controlRF <- trainControl(method="repeatedcv", repeats = 5, number=5, verboseIter=FALSE)
+controlrpart <- trainControl(method="cv", number=5, verboseIter=FALSE)
+
+
+                    
+
+model_rpart <- train(classe ~ ., data=training, method = "rpart", preProcess=c("center", "scale", "nzv", "corr", "zv"),
+                   trControl=controlglm)
+
+model_rpart$finalModel
+
+predict_rpart <- predict(model_rpart, testing)
+confusionMatrix(factor(testing$classe, levels=c("A", "B", "C", "D", "E")), factor(predict_rpart, levels=c("A", "B", "C", "D", "E")))
+
+
+
+
+```
+
+Now, I predict the outcome variable in the pml_testing dataset. The random forest model is used.
+
+```{r}
+predict(model_rf, pml_testing)
+```
+
